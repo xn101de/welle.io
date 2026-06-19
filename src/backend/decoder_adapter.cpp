@@ -152,6 +152,13 @@ void DecoderAdapter::PADChangeDynamicLabel(const DL_STATE &dl)
                     (CharacterSet)dl.charset,
                     dl.raw.size()));
     }
+
+    // forward any DL Plus tags (empty when the label carries none)
+    std::vector<std::pair<int, std::string>> dl_plus_objects;
+    dl_plus_objects.reserve(dl.dl_plus_objects.size());
+    for (const auto& obj : dl.dl_plus_objects)
+        dl_plus_objects.emplace_back(obj.content_type, obj.text);
+    myInterface.onNewDynamicLabelDLPlus(dl.dl_plus_it, dl.dl_plus_ir, dl_plus_objects);
 }
 
 void DecoderAdapter::PADChangeSlide(const MOT_FILE &slide)

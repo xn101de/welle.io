@@ -17,6 +17,29 @@
  */
 
 #include "pad_decoder.h"
+#include "charsets.h"
+
+#include <stdexcept>
+
+
+// --- DL Plus helper: substring of a UTF-8 string by codepoint offset/length -----
+// DL Plus start/length markers count characters (code points), not bytes.
+static std::string UTF8Substr(const std::string& s, size_t char_start, size_t char_len) {
+	size_t n = s.size();
+	auto step = [&](size_t i) -> size_t {
+		unsigned char c = (unsigned char)s[i];
+		return c < 0x80 ? 1 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4;
+	};
+	size_t bstart = 0;
+	for (size_t chars = 0; bstart < n && chars < char_start; chars++)
+		bstart += step(bstart);
+	size_t bend = bstart;
+	for (size_t chars = 0; bend < n && chars < char_len; chars++)
+		bend += step(bend);
+	if (bstart > n) bstart = n;
+	if (bend > n) bend = n;
+	return s.substr(bstart, bend - bstart);
+}
 
 
 // --- XPAD_CI -----------------------------------------------------------------
@@ -294,6 +317,7 @@ void DynamicLabelDecoder::Reset() {
 	DataGroup::Reset();
 
 	dl_sr.Reset();
+	dl_plus_sr.Reset();
 	label.Reset();
 }
 
@@ -302,12 +326,17 @@ bool DynamicLabelDecoder::DecodeDataGroup() {
 
 	size_t field_len = 0;
 	bool cmd_remove_label = false;
+	bool cmd_dl_plus = false;
 
 	// handle command/segment
 	if(command) {
 		switch(dg_raw[0] & 0x0F) {
 		case 0x01:	// remove label
 			cmd_remove_label = true;
+			break;
+		case 0x02:	// DL Plus
+			cmd_dl_plus = true;
+			field_len = (dg_raw[1] & 0x0F) + 1;
 			break;
 		default:
 			// ignore command
@@ -331,6 +360,7 @@ bool DynamicLabelDecoder::DecodeDataGroup() {
 
 	// on Remove Label command, display empty label
 	if(cmd_remove_label) {
+		DataGroup::Reset();
 		label.Reset();
 		return true;
 	}
@@ -340,18 +370,106 @@ bool DynamicLabelDecoder::DecodeDataGroup() {
 	memcpy(dl_seg.prefix, &dg_raw[0], 2);
 	dl_seg.chars.insert(dl_seg.chars.begin(), dg_raw.begin() + 2, dg_raw.begin() + 2 + field_len);
 
+	bool current_flag = cmd_dl_plus ? dl_seg.DLPlusLink() : dl_seg.Toggle();
+	bool dl_toggle;
+	bool dl_plus_link;
+
+	// reset affected reassemblers upon different relevant (toggle or DL Plus link) flag value
+	if(dl_sr.GetToggle(dl_toggle) && dl_toggle != current_flag)
+		dl_sr.Reset();
+	if(dl_plus_sr.GetDLPlusLink(dl_plus_link) && dl_plus_link != current_flag)
+		dl_plus_sr.Reset();
+
 	DataGroup::Reset();
 
-//	fprintf(stderr, "DynamicLabelDecoder: segnum %d, toggle: %s, chars_len: %2d%s\n", dl_seg.SegNum(), dl_seg.Toggle() ? "Y" : "N", dl_seg.chars.size(), dl_seg.Last() ? " [LAST]" : "");
+	if(cmd_dl_plus) {
+		// try to add DL Plus command segment
+		if(!dl_plus_sr.AddSegment(dl_seg))
+			return false;
 
-	// try to add segment
-	if(!dl_sr.AddSegment(dl_seg))
-		return false;
+		// the DL Plus command only makes sense once the DL itself is complete
+		if(!dl_sr.CheckForCompleteLabel())
+			return false;
+	} else {
+		// try to add segment
+		if(!dl_sr.AddSegment(dl_seg))
+			return false;
+	}
 
 	// append new label
+	label.Reset();
 	label.raw = dl_sr.label_raw;
 	label.charset = dl_sr.dl_segs[0].prefix[1] >> 4;
+
+	// if completed, append also DL Plus
+	if(dl_plus_sr.CheckForCompleteLabel())
+		AppendDLPlus();
+
 	return true;
+}
+
+void DynamicLabelDecoder::AppendDLPlus() {
+	std::vector<uint8_t>& dl_plus_cmd = dl_plus_sr.label_raw;
+
+	// abort, if not a DL Plus tags command (first nibble == 0b0000)
+	if(dl_plus_cmd.empty() || (dl_plus_cmd[0] >> 4) != 0x00)
+		return;
+
+	label.dl_plus_it = dl_plus_cmd[0] & 0x08;
+	label.dl_plus_ir = dl_plus_cmd[0] & 0x04;
+	size_t nt = dl_plus_cmd[0] & 0x03;	// number of tags - 1
+
+	// abort, if the announced tags don't fit the command
+	if(dl_plus_cmd.size() < 1 + (nt + 1) * 3)
+		return;
+
+	// the markers index characters of the DL text, so convert it to UTF-8 first
+	if(label.raw.empty())
+		return;
+	std::string label_text;
+	try {
+		label_text = toUtf8StringUsingCharset(
+				label.raw.data(), (CharacterSet)label.charset, label.raw.size());
+	} catch (const std::exception&) {
+		return;
+	}
+
+	// process tags
+	for(size_t i = 0; i < (nt + 1); i++) {
+		const uint8_t* dl_plus_tag = &dl_plus_cmd[1 + i * 3];
+
+		int content_type = dl_plus_tag[0] & 0x7F;
+		size_t start_marker = dl_plus_tag[1] & 0x7F;
+		size_t length_marker = dl_plus_tag[2] & 0x7F;
+
+		// extract object text from DL text (skip DUMMY)
+		std::string text;
+		if(content_type != 0)
+			text = UTF8Substr(label_text, start_marker, length_marker + 1);
+
+		label.dl_plus_objects.push_back(DL_PLUS_OBJECT(content_type, text));
+	}
+}
+
+const char* DynamicLabelDecoder::dl_plus_content_types[] = {
+	"DUMMY",
+	"ITEM.TITLE", "ITEM.ALBUM", "ITEM.TRACKNUMBER", "ITEM.ARTIST", "ITEM.COMPOSITION", "ITEM.MOVEMENT", "ITEM.CONDUCTOR", "ITEM.COMPOSER", "ITEM.BAND", "ITEM.COMMENT", "ITEM.GENRE",
+	"INFO.NEWS", "INFO.NEWS.LOCAL", "INFO.STOCKMARKET", "INFO.SPORT", "INFO.LOTTERY", "INFO.HOROSCOPE", "INFO.DAILY_DIVERSION", "INFO.HEALTH", "INFO.EVENT", "INFO.SCENE", "INFO.CINEMA", "INFO.TV", "INFO.DATE_TIME", "INFO.WEATHER", "INFO.TRAFFIC", "INFO.ALARM", "INFO.ADVERTISEMENT", "INFO.URL", "INFO.OTHER",
+	"STATIONNAME.SHORT", "STATIONNAME.LONG",
+	"PROGRAMME.NOW", "PROGRAMME.NEXT", "PROGRAMME.PART", "PROGRAMME.HOST", "PROGRAMME.EDITORIAL_STAFF", "PROGRAMME.FREQUENCY", "PROGRAMME.HOMEPAGE", "PROGRAMME.SUBCHANNEL",
+	"PHONE.HOTLINE", "PHONE.STUDIO", "PHONE.OTHER",
+	"SMS.STUDIO", "SMS.OTHER",
+	"EMAIL.HOTLINE", "EMAIL.STUDIO", "EMAIL.OTHER",
+	"MMS.OTHER",
+	"CHAT", "CHAT.CENTER",
+	"VOTE.QUESTION", "VOTE.CENTRE",
+	"(reserved)", "(reserved)",
+	"(private class)", "(private class)", "(private class)",
+	"DESCRIPTOR.PLACE", "DESCRIPTOR.APPOINTMENT", "DESCRIPTOR.IDENTIFIER", "DESCRIPTOR.PURCHASE", "DESCRIPTOR.GET_DATA"
+};
+
+std::string DynamicLabelDecoder::ConvertDLPlusContentTypeToString(const int value) {
+	return value < 64 ? dl_plus_content_types[value] : "(reserved)";
 }
 
 
@@ -362,16 +480,13 @@ void DL_SEG_REASSEMBLER::Reset() {
 }
 
 bool DL_SEG_REASSEMBLER::AddSegment(DL_SEG &dl_seg) {
-	dl_segs_t::const_iterator it;
-
 	// if there are already segments with other toggle value in cache, first clear it
-	it = dl_segs.cbegin();
-	if(it != dl_segs.cend() && it->second.Toggle() != dl_seg.Toggle())
+	bool current_toggle;
+	if(GetToggle(current_toggle) && current_toggle != dl_seg.Toggle())
 		dl_segs.clear();
 
 	// if the segment is already there, abort
-	it = dl_segs.find(dl_seg.SegNum());
-	if(it != dl_segs.cend())
+	if(dl_segs.find(dl_seg.SegNum()) != dl_segs.cend())
 		return false;
 
 	// add segment
@@ -379,6 +494,20 @@ bool DL_SEG_REASSEMBLER::AddSegment(DL_SEG &dl_seg) {
 
 	// check for complete label
 	return CheckForCompleteLabel();
+}
+
+bool DL_SEG_REASSEMBLER::GetToggle(bool& result) {
+	if(dl_segs.empty())
+		return false;
+	result = dl_segs.cbegin()->second.Toggle();
+	return true;
+}
+
+bool DL_SEG_REASSEMBLER::GetDLPlusLink(bool& result) {
+	if(dl_segs.empty())
+		return false;
+	result = dl_segs.cbegin()->second.DLPlusLink();
+	return true;
 }
 
 bool DL_SEG_REASSEMBLER::CheckForCompleteLabel() {
