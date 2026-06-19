@@ -36,6 +36,7 @@
 #include <cstddef>
 #include <vector>
 #include <string>
+#include <utility>
 #include <complex>
 #include "dab-constants.h"
 
@@ -165,6 +166,14 @@ class ProgrammeHandlerInterface {
         /* A new Dynamic Label was decoded.
          * label is utf-8 encoded. */
         virtual void onNewDynamicLabel(const std::string& label) = 0;
+
+        /* (DAB+ only) DL Plus tags decoded together with the Dynamic Label.
+         * objects holds (content type, utf-8 text) pairs (see ETSI TS 102 980);
+         * item_running is false e.g. between items. Default no-op so decoders
+         * that don't care about DL Plus need not implement it. */
+        virtual void onNewDynamicLabelDLPlus(
+                bool /*item_toggle*/, bool /*item_running*/,
+                const std::vector<std::pair<int, std::string>>& /*objects*/) {}
 
         /* A slide was decoded. data contains the raw bytes, and subtype
          * defines the data format:

@@ -30,6 +30,7 @@
 #include <vector>
 #include <memory>
 #include <ctime>
+#include <utility>
 #include "dab-constants.h"
 #include "backend/radio-controller.h"
 
@@ -96,6 +97,9 @@ struct ServiceJson {
     std::string dls_label;
     std::time_t dls_time = 0;
     std::time_t dls_lastchange = 0;
+
+    bool dlplus_item_running = false;
+    std::vector<std::pair<std::string, std::string>> dlplus_objects;   // (content type, text)
 
     size_t errorcounters_frameerrors = 0;
     size_t errorcounters_rserrors = 0;

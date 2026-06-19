@@ -284,6 +284,21 @@ WebProgrammeHandler::dls_t WebProgrammeHandler::getDLS() const
     return dls;
 }
 
+WebProgrammeHandler::dlplus_t WebProgrammeHandler::getDLPlus() const
+{
+    dlplus_t dlplus;
+
+    std::unique_lock<std::mutex> lock(stats_mutex);
+    if (last_dlplus_valid) {
+        dlplus.item_running = dlplus_item_running;
+        dlplus.objects = dlplus_objects;
+        dlplus.time = time_dlplus;
+        dlplus.last_changed = time_dlplus_change;
+    }
+
+    return dlplus;
+}
+
 WebProgrammeHandler::mot_t WebProgrammeHandler::getMOT() const
 {
     mot_t mot;
@@ -415,6 +430,20 @@ void WebProgrammeHandler::onNewDynamicLabel(const string& label)
         time_label_change = now;
     }
     last_label = label;
+}
+
+void WebProgrammeHandler::onNewDynamicLabelDLPlus(bool /*item_toggle*/, bool item_running,
+        const std::vector<std::pair<int, std::string>>& objects)
+{
+    std::unique_lock<std::mutex> lock(stats_mutex);
+    last_dlplus_valid = true;
+    const auto now = chrono::system_clock::now();
+    time_dlplus = now;
+    if (dlplus_item_running != item_running || dlplus_objects != objects) {
+        time_dlplus_change = now;
+    }
+    dlplus_item_running = item_running;
+    dlplus_objects = objects;
 }
 
 void WebProgrammeHandler::onMOT(const mot_file_t& mot_file)

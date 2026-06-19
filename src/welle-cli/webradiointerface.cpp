@@ -52,6 +52,7 @@
 #include "channels.h"
 #include "ofdm-decoder.h"
 #include "radio-receiver.h"
+#include "pad_decoder.h"
 #include "virtual_input.h"
 #include "welle-cli/jsonconvert.h"
 #include "welle-cli/webprogrammehandler.h"
@@ -727,6 +728,13 @@ bool WebRadioInterface::send_mux_json(Socket& s)
                 service.dls_label = dls.label;
                 service.dls_time = chrono::system_clock::to_time_t(dls.time);
                 service.dls_lastchange = chrono::system_clock::to_time_t(mot.last_changed);
+
+                auto dlplus = wph.getDLPlus();
+                service.dlplus_item_running = dlplus.item_running;
+                for (const auto& obj : dlplus.objects)
+                    service.dlplus_objects.emplace_back(
+                            DynamicLabelDecoder::ConvertDLPlusContentTypeToString(obj.first),
+                            obj.second);
 
                 auto errorcounters = wph.getErrorCounters();
                 service.errorcounters_frameerrors = errorcounters.num_frameErrors;

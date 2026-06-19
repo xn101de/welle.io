@@ -143,6 +143,14 @@ static void to_json(nlohmann::json& j, const ServiceJson& s) {
             {"aacerrors", s.errorcounters_aacerrors},
             {"time", s.errorcounters_time}}}};
 
+    // DL Plus tags (artist/title/...) decoded from the Dynamic Label, if present
+    nlohmann::json dlplus_tags = nlohmann::json::array();
+    for (const auto& obj : s.dlplus_objects)
+        dlplus_tags.push_back(nlohmann::json{{"type", obj.first}, {"text", obj.second}});
+    j["dls"]["dlplus"] = nlohmann::json{
+        {"item_running", s.dlplus_item_running},
+        {"tags", dlplus_tags}};
+
     if (s.xpaderror_haserror) {
         j["xpaderror"] = nlohmann::json{
             {"haserror", s.xpaderror_haserror},

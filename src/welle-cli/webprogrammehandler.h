@@ -34,6 +34,8 @@
 #include <chrono>
 #include <string>
 #include <atomic>
+#include <utility>
+#include <vector>
 
 class ProgrammeSender {
     private:
@@ -98,6 +100,12 @@ class WebProgrammeHandler : public ProgrammeHandlerInterface {
         std::chrono::time_point<std::chrono::system_clock> time_label_change;
         std::string last_label;
 
+        bool last_dlplus_valid = false;
+        std::chrono::time_point<std::chrono::system_clock> time_dlplus;
+        std::chrono::time_point<std::chrono::system_clock> time_dlplus_change;
+        bool dlplus_item_running = false;
+        std::vector<std::pair<int, std::string>> dlplus_objects;
+
         bool last_mot_valid = false;
         std::chrono::time_point<std::chrono::system_clock> time_mot;
         std::chrono::time_point<std::chrono::system_clock> time_mot_change;
@@ -128,6 +136,13 @@ class WebProgrammeHandler : public ProgrammeHandlerInterface {
             std::chrono::time_point<std::chrono::system_clock> last_changed; };
         dls_t getDLS() const;
 
+        struct dlplus_t {
+            bool item_running = false;
+            std::vector<std::pair<int, std::string>> objects;   // (content type, utf-8 text)
+            std::chrono::time_point<std::chrono::system_clock> time;
+            std::chrono::time_point<std::chrono::system_clock> last_changed; };
+        dlplus_t getDLPlus() const;
+
         struct mot_t {
             std::vector<uint8_t> data;
             MOTType subtype = MOTType::Unknown;
@@ -145,6 +160,8 @@ class WebProgrammeHandler : public ProgrammeHandlerInterface {
         virtual void onRsErrors(bool uncorrectedErrors, int numCorrectedErrors) override;
         virtual void onAacErrors(int aacErrors) override;
         virtual void onNewDynamicLabel(const std::string& label) override;
+        virtual void onNewDynamicLabelDLPlus(bool item_toggle, bool item_running,
+                const std::vector<std::pair<int, std::string>>& objects) override;
         virtual void onMOT(const mot_file_t& mot_file) override;
         virtual void onPADLengthError(size_t announced_xpad_len, size_t xpad_len) override;
 };
