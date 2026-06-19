@@ -20,6 +20,7 @@
 #include "charsets.h"
 
 #include <stdexcept>
+#include <cstdlib>
 
 
 // --- DL Plus helper: substring of a UTF-8 string by codepoint offset/length -----
@@ -133,6 +134,17 @@ void PADDecoder::Process(const uint8_t *xpad_data, size_t xpad_len, bool exact_x
 		if(loose)
 			last_xpad_ci = prev_xpad_ci;
 		return;
+	}
+
+	// Diagnostic (env WELLE_PAD_DEBUG): log the raw X-PAD Contents Indicator
+	// types present in this frame. CI type 2/3 = Dynamic Label (DLS) segment,
+	// 1 = DGLI, 12/13 = MOT. Lets one see what a station actually transmits at
+	// the PAD layer, independent of whether the DLS itself decodes.
+	if(getenv("WELLE_PAD_DEBUG")) {
+		fprintf(stderr, "PAD-CI:");
+		for(const XPAD_CI& ci : xpad_cis)
+			fprintf(stderr, " t=%d/l=%zu", ci.type, ci.len);
+		fprintf(stderr, "\n");
 	}
 
 	size_t announced_xpad_len = xpad_cis_len;
