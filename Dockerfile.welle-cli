@@ -1,0 +1,32 @@
+# Home-lab CI image: welle-cli built from THIS fork's source (xn101de/welle.io).
+#
+# Kept on the `homelab` branch only and excluded via .git/info/exclude so it
+# never lands on an upstream-PR branch (those are cut from `master`). Published
+# by .github/workflows/welle-cli-image.yml to ghcr.io/xn101de/welle-cli.
+#
+# Dependency set + cmake flags mirror the proven home-lab build exactly; the
+# only change is building from this checkout (COPY .) instead of cloning
+# AlbrechtL/welle.io, so the image carries our fork's fixes.
+FROM ubuntu:24.04
+LABEL org.opencontainers.image.source="https://github.com/xn101de/welle.io"
+LABEL org.opencontainers.image.description="welle-cli (DAB+/DAB receiver CLI + web server), built from the xn101de/welle.io fork"
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Europe/Berlin
+
+RUN apt-get update -y && \
+    apt-get install -y git build-essential cmake plocate libfaad-dev libmpg123-dev \
+        libfftw3-dev librtlsdr-dev libusb-1.0-0-dev mesa-common-dev libglu1-mesa-dev \
+        libpulse-dev libsoapysdr-dev libairspy-dev libmp3lame-dev libflac++-dev xxd && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY . /src
+RUN cd /src && mkdir -p build && cd build && \
+    cmake ../ -DBUILD_WELLE_IO=off -DFLAC=ON -Wno-dev && \
+    make -j"$(nproc)" && \
+    make install && \
+    cd / && rm -rf /src/build
+
+EXPOSE 8082
+# No ENTRYPOINT: the compose `command:` supplies the full `welle-cli …` line,
+# matching the existing home-lab stack (welle-cli is on PATH via `make install`).
+CMD ["welle-cli", "-h"]
