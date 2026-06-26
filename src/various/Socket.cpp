@@ -35,6 +35,10 @@
 #include <cstring>
 #include "various/Socket.h"
 
+#if !defined(_WIN32)
+#include <sys/time.h>   // struct timeval (SO_RCVTIMEO)
+#endif
+
 #if defined(_WIN32)
 class SocketInitialiseWrapper {
     public:
@@ -176,6 +180,23 @@ Socket Socket::accept()
 
     Socket s;
     s.sock = conn;
+
+    // Bound how long recv() may block while reading a client's request, so a
+    // connection that opens but never sends a complete request (TCP/health
+    // probes, half-open peers whose RST was lost, scanners) cannot pin its
+    // handler thread and socket FD forever. Without this, such connections leak
+    // file descriptors until accept() fails with "Too many open files".
+    // Streaming endpoints only send(), so a receive timeout does not affect them.
+#if defined(_WIN32)
+    DWORD recv_timeout_ms = 20000;
+    setsockopt(conn, SOL_SOCKET, SO_RCVTIMEO,
+            (const char*)&recv_timeout_ms, sizeof(recv_timeout_ms));
+#else
+    struct timeval recv_timeout = {};
+    recv_timeout.tv_sec = 20;
+    setsockopt(conn, SOL_SOCKET, SO_RCVTIMEO, &recv_timeout, sizeof(recv_timeout));
+#endif
+
     return s;
 }
 
